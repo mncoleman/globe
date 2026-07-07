@@ -27,8 +27,10 @@ export function InteractiveGlobe({ location }: GlobeProps) {
     if (!canvasRef.current) return;
 
     let phi = 0;
+    let theta = 0.3;
     let isDragging = false;
     let lastX = 0;
+    let lastY = 0;
     let rafId: number;
 
     const globe = createGlobe(canvasRef.current, {
@@ -52,6 +54,7 @@ export function InteractiveGlobe({ location }: GlobeProps) {
 
       globe.update({
         phi,
+        theta,
         markers: location ? [{ location: location!, size: 0.001, id: MARKER_ID }] : [],
       });
 
@@ -87,12 +90,15 @@ export function InteractiveGlobe({ location }: GlobeProps) {
     const onPointerDown = (e: PointerEvent) => {
       isDragging = true;
       lastX = e.clientX;
+      lastY = e.clientY;
       canvas.setPointerCapture(e.pointerId);
     };
     const onPointerMove = (e: PointerEvent) => {
       if (!isDragging) return;
-      phi += (e.clientX - lastX) * 0.005;
+      phi   += (e.clientX - lastX) * 0.005;
+      theta  = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, theta + (e.clientY - lastY) * 0.005));
       lastX = e.clientX;
+      lastY = e.clientY;
     };
     const onPointerUp = () => { isDragging = false; };
 
