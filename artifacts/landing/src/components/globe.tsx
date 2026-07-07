@@ -6,19 +6,50 @@ interface GlobeProps {
   location?: [number, number] | null;
 }
 
-const MARKER_ID = "user-location";
+function latLngToSphere([lat, lng]: [number, number]): [number, number, number] {
+  const latRad = (lat * Math.PI) / 180;
+  const lngRad = (lng * Math.PI) / 180 - Math.PI;
+  const cosLat = Math.cos(latRad);
+  return [
+    -cosLat * Math.sin(lngRad),
+     Math.sin(latRad),
+     cosLat * Math.cos(lngRad),
+  ];
+}
+
+function projectToScreen(
+  point: [number, number, number],
+  phi: number,
+  theta: number
+): { x: number; y: number; visible: boolean } {
+  const [px, py, pz] = point;
+  const cosPhi   = Math.cos(phi);
+  const sinPhi   = Math.sin(phi);
+  const cosTheta = Math.cos(theta);
+  const sinTheta = Math.sin(theta);
+
+  // Apply cobe's rotation matrix (phi then theta)
+  const cx =  cosPhi   * px + sinPhi * pz;
+  const cy =  sinPhi * sinTheta * px + cosTheta * py - cosPhi * sinTheta * pz;
+  const cz = -sinPhi * cosTheta * px + sinTheta * py + cosPhi * cosTheta * pz;
+
+  const visible = cz >= 0 && cx * cx + cy * cy < 0.64;
+
+  return {
+    x: ((cx + 1) / 2) * 100,
+    y: ((-cy + 1) / 2) * 100,
+    visible,
+  };
+}
 
 export function InteractiveGlobe({ location }: GlobeProps) {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const canvasRef  = useRef<HTMLCanvasElement>(null);
   const overlayRef = useRef<SVGSVGElement>(null);
-  const { theme } = useTheme();
+  const { theme }  = useTheme();
 
   const actualTheme =
     theme === "system"
-      ? window.matchMedia("(prefers-color-scheme: dark)").matches
-        ? "dark"
-        : "light"
+      ? window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"
       : theme;
 
   const isDark = actualTheme === "dark";
@@ -26,7 +57,7 @@ export function InteractiveGlobe({ location }: GlobeProps) {
   useEffect(() => {
     if (!canvasRef.current) return;
 
-    let phi = 0;
+    let phi   = 0;
     let theta = 0.3;
     let isDragging = false;
     let lastX = 0;
@@ -35,7 +66,7 @@ export function InteractiveGlobe({ location }: GlobeProps) {
 
     const globe = createGlobe(canvasRef.current, {
       devicePixelRatio: 2,
-      width: 600 * 2,
+      width:  600 * 2,
       height: 600 * 2,
       phi: 0,
       theta: 0.3,
@@ -43,42 +74,30 @@ export function InteractiveGlobe({ location }: GlobeProps) {
       diffuse: 1.2,
       mapSamples: 16000,
       mapBrightness: 6,
-      baseColor: isDark ? [0.3, 0.3, 0.3] : [0.6, 0.65, 0.8],
+      baseColor:  isDark ? [0.3, 0.3, 0.3] : [0.6, 0.65, 0.8],
       markerColor: [0, 0, 0],
-      glowColor: isDark ? [1, 1, 1] : [0.3, 0.5, 0.9],
-      markers: location ? [{ location, size: 0.001, id: MARKER_ID }] : [],
+      glowColor:  isDark ? [1, 1, 1] : [0.3, 0.5, 0.9],
+      markers: [],
     });
+
+    const MARKER_ELEVATION = 0.85; // 0.8 (sphere radius) + 0.05 (elevation)
 
     function animate() {
       if (!isDragging) phi += 0.003;
 
-      globe.update({
-        phi,
-        theta,
-        markers: location ? [{ location: location!, size: 0.001, id: MARKER_ID }] : [],
-      });
+      globe.update({ phi, theta });
 
       if (overlayRef.current && location) {
-        const wrapper = canvasRef.current?.parentElement;
-        if (wrapper) {
-          const anchor = wrapper.querySelector(
-            `[style*="anchor-name:--cobe-${MARKER_ID}"]`
-          ) as HTMLElement | null;
-
-          if (anchor) {
-            const left = parseFloat(anchor.style.left);
-            const top = parseFloat(anchor.style.top);
-            overlayRef.current.style.left = `${left}%`;
-            overlayRef.current.style.top = `${top}%`;
-
-            const visible = getComputedStyle(document.documentElement)
-              .getPropertyValue(`--cobe-visible-${MARKER_ID}`)
-              .trim();
-            overlayRef.current.style.opacity = visible === "N" ? "1" : "0";
-          } else {
-            overlayRef.current.style.opacity = "0";
-          }
-        }
+        const sphere   = latLngToSphere(location);
+        const elevated: [number, number, number] = [
+          sphere[0] * MARKER_ELEVATION,
+          sphere[1] * MARKER_ELEVATION,
+          sphere[2] * MARKER_ELEVATION,
+        ];
+        const { x, y, visible } = projectToScreen(elevated, phi, theta);
+        overlayRef.current.style.left    = `${x}%`;
+        overlayRef.current.style.top     = `${y}%`;
+        overlayRef.current.style.opacity = visible ? "1" : "0";
       }
 
       rafId = requestAnimationFrame(animate);
@@ -97,29 +116,28 @@ export function InteractiveGlobe({ location }: GlobeProps) {
       if (!isDragging) return;
       phi   += (e.clientX - lastX) * 0.005;
       theta  = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, theta + (e.clientY - lastY) * 0.005));
-      lastX = e.clientX;
-      lastY = e.clientY;
+      lastX  = e.clientX;
+      lastY  = e.clientY;
     };
     const onPointerUp = () => { isDragging = false; };
 
-    canvas.addEventListener("pointerdown", onPointerDown);
-    canvas.addEventListener("pointermove", onPointerMove);
-    canvas.addEventListener("pointerup", onPointerUp);
+    canvas.addEventListener("pointerdown",  onPointerDown);
+    canvas.addEventListener("pointermove",  onPointerMove);
+    canvas.addEventListener("pointerup",    onPointerUp);
     canvas.addEventListener("pointerleave", onPointerUp);
 
     return () => {
       cancelAnimationFrame(rafId);
       globe.destroy();
-      canvas.removeEventListener("pointerdown", onPointerDown);
-      canvas.removeEventListener("pointermove", onPointerMove);
-      canvas.removeEventListener("pointerup", onPointerUp);
+      canvas.removeEventListener("pointerdown",  onPointerDown);
+      canvas.removeEventListener("pointermove",  onPointerMove);
+      canvas.removeEventListener("pointerup",    onPointerUp);
       canvas.removeEventListener("pointerleave", onPointerUp);
     };
   }, [isDark, location]);
 
   return (
     <div
-      ref={containerRef}
       className="w-[300px] h-[300px] sm:w-[400px] sm:h-[400px] lg:w-[600px] lg:h-[600px] cursor-grab active:cursor-grabbing select-none relative"
       style={{ touchAction: "none" }}
     >
@@ -139,7 +157,7 @@ export function InteractiveGlobe({ location }: GlobeProps) {
             transform: "translate(-50%, -50%)",
             pointerEvents: "none",
             opacity: 0,
-            transition: "opacity 0.3s ease",
+            transition: "opacity 0.2s ease",
             overflow: "visible",
           }}
         >
@@ -163,24 +181,17 @@ export function InteractiveGlobe({ location }: GlobeProps) {
           `}</style>
 
           {/* Expanding pulse rings */}
-          <circle
-            cx="0" cy="0" r="10"
-            fill="none"
-            stroke="rgb(34 211 238)"
-            strokeWidth="1"
+          <circle cx="0" cy="0" r="10"
+            fill="none" stroke="rgb(34 211 238)" strokeWidth="1"
             style={{ animation: "reticle-pulse-1 2s ease-out infinite" }}
           />
-          <circle
-            cx="0" cy="0" r="14"
-            fill="none"
-            stroke="rgb(34 211 238)"
-            strokeWidth="0.5"
+          <circle cx="0" cy="0" r="14"
+            fill="none" stroke="rgb(34 211 238)" strokeWidth="0.5"
             style={{ animation: "reticle-pulse-2 2s ease-out infinite 0.4s" }}
           />
 
-          {/* Rotating outer arc segments — unique "reticle" shape */}
+          {/* Rotating arc segments */}
           <g style={{ animation: "reticle-spin 8s linear infinite" }}>
-            {/* 4 arc segments with gaps — like a radar sweep indicator */}
             {[0, 90, 180, 270].map((deg) => (
               <path
                 key={deg}
@@ -194,21 +205,17 @@ export function InteractiveGlobe({ location }: GlobeProps) {
             ))}
           </g>
 
-          {/* Static tick marks at cardinal points */}
+          {/* Static tick marks */}
           {[0, 90, 180, 270].map((deg) => (
-            <line
-              key={deg}
-              x1="0" y1="-12"
-              x2="0" y2="-16"
-              stroke="rgb(34 211 238)"
-              strokeWidth="1"
-              strokeLinecap="round"
+            <line key={deg}
+              x1="0" y1="-12" x2="0" y2="-16"
+              stroke="rgb(34 211 238)" strokeWidth="1" strokeLinecap="round"
               transform={`rotate(${deg})`}
               style={{ animation: "reticle-blink 2s ease-in-out infinite" }}
             />
           ))}
 
-          {/* Inner cross */}
+          {/* Inner crosshair */}
           <line x1="-4" y1="0" x2="-2" y2="0" stroke="rgb(34 211 238)" strokeWidth="1" strokeLinecap="round" />
           <line x1="2"  y1="0" x2="4"  y2="0" stroke="rgb(34 211 238)" strokeWidth="1" strokeLinecap="round" />
           <line x1="0" y1="-4" x2="0" y2="-2" stroke="rgb(34 211 238)" strokeWidth="1" strokeLinecap="round" />
