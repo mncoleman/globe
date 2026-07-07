@@ -41,13 +41,13 @@ export default function Home() {
       <main className="container mx-auto px-4 pt-32 pb-16 relative z-10 flex flex-col items-center">
         
         {/* Hero Section */}
-        <section className="w-full min-h-[70vh] flex flex-col items-center justify-center text-center relative mb-24">
-          <div className="absolute inset-0 flex items-center justify-center -z-10">
-            <InteractiveGlobe location={userData.coordinates} />
-          </div>
-          
-          <div className="mt-[400px] lg:mt-[500px] z-10">
-            <motion.h1 
+        <section className="w-full flex flex-col items-center text-center relative mb-24">
+          {/* Globe — in flow, receives all pointer events */}
+          <InteractiveGlobe location={userData.coordinates} />
+
+          {/* Text sits below the globe, no z-index conflict */}
+          <div className="mt-6 z-10">
+            <motion.h1
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.5, duration: 0.8 }}
@@ -55,7 +55,7 @@ export default function Home() {
             >
               You are here.
             </motion.h1>
-            <motion.p 
+            <motion.p
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.7, duration: 0.8 }}

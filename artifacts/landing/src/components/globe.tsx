@@ -43,53 +43,57 @@ export function InteractiveGlobe({ location }: GlobeProps) {
 
     function animate() {
       if (!isDragging) phi += 0.003;
-      globe.update({ phi, markers: location ? [{ location: location!, size: 0.08 }] : [] });
+
+      const pulse = location
+        ? 0.06 + 0.03 * Math.abs(Math.sin(Date.now() * 0.003))
+        : 0;
+
+      globe.update({
+        phi,
+        markers: location ? [{ location: location!, size: pulse }] : [],
+      });
+
       rafId = requestAnimationFrame(animate);
     }
     rafId = requestAnimationFrame(animate);
 
     const canvas = canvasRef.current;
 
-    const onMouseDown = (e: MouseEvent) => { isDragging = true; lastX = e.clientX; };
-    const onMouseMove = (e: MouseEvent) => {
+    const onPointerDown = (e: PointerEvent) => {
+      isDragging = true;
+      lastX = e.clientX;
+      canvas.setPointerCapture(e.pointerId);
+    };
+    const onPointerMove = (e: PointerEvent) => {
       if (!isDragging) return;
       phi += (e.clientX - lastX) * 0.005;
       lastX = e.clientX;
     };
-    const onMouseUp = () => { isDragging = false; };
+    const onPointerUp = () => { isDragging = false; };
 
-    const onTouchStart = (e: TouchEvent) => { isDragging = true; lastX = e.touches[0].clientX; };
-    const onTouchMove = (e: TouchEvent) => {
-      if (!isDragging) return;
-      phi += (e.touches[0].clientX - lastX) * 0.005;
-      lastX = e.touches[0].clientX;
-    };
-    const onTouchEnd = () => { isDragging = false; };
-
-    canvas.addEventListener("mousedown", onMouseDown);
-    window.addEventListener("mousemove", onMouseMove);
-    window.addEventListener("mouseup", onMouseUp);
-    canvas.addEventListener("touchstart", onTouchStart, { passive: true });
-    window.addEventListener("touchmove", onTouchMove, { passive: true });
-    window.addEventListener("touchend", onTouchEnd);
+    canvas.addEventListener("pointerdown", onPointerDown);
+    canvas.addEventListener("pointermove", onPointerMove);
+    canvas.addEventListener("pointerup", onPointerUp);
+    canvas.addEventListener("pointerleave", onPointerUp);
 
     return () => {
       cancelAnimationFrame(rafId);
       globe.destroy();
-      canvas.removeEventListener("mousedown", onMouseDown);
-      window.removeEventListener("mousemove", onMouseMove);
-      window.removeEventListener("mouseup", onMouseUp);
-      canvas.removeEventListener("touchstart", onTouchStart);
-      window.removeEventListener("touchmove", onTouchMove);
-      window.removeEventListener("touchend", onTouchEnd);
+      canvas.removeEventListener("pointerdown", onPointerDown);
+      canvas.removeEventListener("pointermove", onPointerMove);
+      canvas.removeEventListener("pointerup", onPointerUp);
+      canvas.removeEventListener("pointerleave", onPointerUp);
     };
   }, [isDark, location]);
 
   return (
-    <div className="w-[300px] h-[300px] sm:w-[400px] sm:h-[400px] lg:w-[600px] lg:h-[600px] flex items-center justify-center cursor-grab active:cursor-grabbing">
+    <div
+      className="w-[300px] h-[300px] sm:w-[400px] sm:h-[400px] lg:w-[600px] lg:h-[600px] cursor-grab active:cursor-grabbing select-none"
+      style={{ touchAction: "none" }}
+    >
       <canvas
         ref={canvasRef}
-        style={{ width: "100%", height: "100%" }}
+        style={{ width: "100%", height: "100%", display: "block" }}
       />
     </div>
   );
