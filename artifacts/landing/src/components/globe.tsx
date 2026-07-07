@@ -8,13 +8,6 @@ interface GlobeProps {
   precise?: boolean;
 }
 
-// Projection tuning constants for mapping a [lat, lon] onto the rendered
-// cobe globe. cobe centres longitude 0 at phi = 3π/2, so PHI_OFFSET aligns
-// our overlay with its internal orientation. SPHERE_SCALE accounts for the
-// small inset between the canvas edge and the globe's actual radius.
-const PHI_OFFSET = Math.PI * 1.5;
-const SPHERE_SCALE = 0.92;
-
 export function InteractiveGlobe({ location, label, precise }: GlobeProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -54,6 +47,8 @@ export function InteractiveGlobe({ location, label, precise }: GlobeProps) {
       markers: [],
     });
 
+    // Mirrors cobe's own marker projection (its internal U() location→xyz and
+    // O() point→screen) so the overlay lands exactly on the rendered marker.
     function positionLabel() {
       const el = labelRef.current;
       const container = containerRef.current;
@@ -61,39 +56,30 @@ export function InteractiveGlobe({ location, label, precise }: GlobeProps) {
 
       const [lat, lon] = location;
       const latR = (lat * Math.PI) / 180;
-      const lonR = (lon * Math.PI) / 180;
+      const lonA = (lon * Math.PI) / 180 - Math.PI;
+      const clat = Math.cos(latR);
 
-      // Point on the unit sphere in the globe's local frame.
-      const x0 = Math.cos(latR) * Math.sin(lonR);
-      const y0 = Math.sin(latR);
-      const z0 = Math.cos(latR) * Math.cos(lonR);
+      // cobe U(): [lat, lon] → point on the unit sphere.
+      const x = -clat * Math.cos(lonA);
+      const y = Math.sin(latR);
+      const z = clat * Math.sin(lonA);
 
-      // Rotate around the vertical (Y) axis by the current spin.
-      const ph = phi + PHI_OFFSET;
-      const cp = Math.cos(ph);
-      const sp = Math.sin(ph);
-      const x1 = x0 * cp + z0 * sp;
-      const z1 = -x0 * sp + z0 * cp;
-      const y1 = y0;
-
-      // Apply the camera tilt (rotation around the X axis).
+      // cobe O(): rotate by phi (spin) and theta (tilt), project to screen.
+      const cp = Math.cos(phi);
+      const sp = Math.sin(phi);
       const ct = Math.cos(theta);
       const st = Math.sin(theta);
-      const y2 = y1 * ct + z1 * st;
-      const z2 = -y1 * st + z1 * ct;
-      const x2 = x1;
+      const c = cp * x + sp * z;
+      const s = sp * st * x + ct * y - cp * st * z;
+      const dz = -sp * ct * x + st * y + cp * ct * z; // depth: ≥0 = front hemisphere
 
       const size = container.clientWidth;
-      const R = (size / 2) * SPHERE_SCALE;
-      const cx = size / 2;
-      const cy = size / 2;
-      const sx = cx + x2 * R;
-      const sy = cy - y2 * R;
+      const sx = ((c + 1) / 2) * size;
+      const sy = ((1 - s) / 2) * size;
 
-      const visible = z2 > 0;
       el.style.transform = `translate(-50%, -100%) translate(${sx}px, ${sy}px)`;
       // Fade out as the point rotates toward / past the horizon.
-      el.style.opacity = visible ? String(Math.min(1, z2 * 3 + 0.15)) : "0";
+      el.style.opacity = dz >= 0 ? String(Math.min(1, dz * 4 + 0.1)) : "0";
     }
 
     function animate() {
