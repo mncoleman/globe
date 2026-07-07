@@ -1,128 +1,578 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 
 export interface UserData {
-  locationText: string | null;
-  coordinates: [number, number] | null;
+  // ---- status ----
   loading: boolean;
   error: boolean;
+  permissionState: string; // geolocation permission: granted | denied | prompt | unsupported
+
+  // ---- location (drives the globe) ----
+  coordinates: [number, number] | null;
+  precise: boolean;
+  accuracy: string | null;
+  locationLabel: string | null; // short name for the globe pill
+  locationText: string | null; // "City, Region, Country"
+  altitude: string | null;
+
+  // ---- network / IP ----
+  ip: string | null;
+  isp: string | null;
+  org: string | null;
+  asn: string | null;
+  postal: string | null;
+  countryFlag: string | null;
+  currency: string | null;
+  vpnProxy: string | null;
+  ipSource: string | null; // which provider answered
+
+  // ---- coordinate-derived ----
+  elevation: string | null;
+  weather: string | null;
+  feelsLike: string | null;
+  humidity: string | null;
+  wind: string | null;
+  pressure: string | null;
+  cloudCover: string | null;
+  uvIndex: string | null;
+  sunrise: string | null;
+  sunset: string | null;
+  airQuality: string | null;
+
+  // ---- time ----
   timezone: string;
+  utcOffset: string;
   localTime: string;
-  browserOS: string;
-  screenResolution: string;
-  colorDepth: string;
+  locale: string;
+
+  // ---- device / browser ----
+  browser: string;
+  os: string;
+  deviceModel: string | null;
+  cpuArch: string | null;
+  cpuCores: string;
   deviceMemory: string | null;
-  language: string;
-  onlineStatus: string;
+  gpu: string | null;
+  gpuVendor: string | null;
   battery: string | null;
-  connectionType: string | null;
+  storage: string | null;
+
+  // ---- display ----
+  screenResolution: string;
+  availResolution: string;
+  windowSize: string;
+  pixelRatio: string;
+  colorDepth: string;
+  colorGamut: string | null;
+  orientation: string | null;
+  hdr: string | null;
+
+  // ---- input / media ----
+  touchSupport: string;
+  pointerType: string | null;
+  cameras: string | null;
+  microphones: string | null;
+  speakers: string | null;
+
+  // ---- preferences / privacy ----
+  language: string;
+  languages: string | null;
   cookiesEnabled: string;
   doNotTrack: string;
-  cpuCores: string;
-  touchSupport: string;
+  gpc: string | null;
+  reducedMotion: string | null;
+  colorScheme: string | null;
+  connectionType: string | null;
+  connectionDetail: string | null;
+  onlineStatus: string;
+  referrer: string | null;
+  webdriver: string | null;
+
+  // ---- fingerprint ----
+  canvasHash: string | null;
+  fonts: string | null;
+  permissions: string | null;
+}
+
+const WMO: Record<number, string> = {
+  0: "Clear sky", 1: "Mainly clear", 2: "Partly cloudy", 3: "Overcast",
+  45: "Fog", 48: "Rime fog", 51: "Light drizzle", 53: "Drizzle", 55: "Dense drizzle",
+  56: "Freezing drizzle", 57: "Freezing drizzle", 61: "Light rain", 63: "Rain", 65: "Heavy rain",
+  66: "Freezing rain", 67: "Freezing rain", 71: "Light snow", 73: "Snow", 75: "Heavy snow",
+  77: "Snow grains", 80: "Light showers", 81: "Showers", 82: "Violent showers",
+  85: "Snow showers", 86: "Snow showers", 95: "Thunderstorm", 96: "Thunderstorm + hail",
+  99: "Severe thunderstorm",
+};
+
+const WMO_ICON: Record<number, string> = {
+  0: "☀️", 1: "🌤️", 2: "⛅", 3: "☁️", 45: "🌫️", 48: "🌫️", 51: "🌦️", 53: "🌦️", 55: "🌧️",
+  56: "🌧️", 57: "🌧️", 61: "🌧️", 63: "🌧️", 65: "🌧️", 66: "🌧️", 67: "🌧️", 71: "🌨️", 73: "🌨️",
+  75: "❄️", 77: "🌨️", 80: "🌦️", 81: "🌧️", 82: "⛈️", 85: "🌨️", 86: "❄️", 95: "⛈️", 96: "⛈️", 99: "⛈️",
+};
+
+function compass(deg: number): string {
+  const dirs = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"];
+  return dirs[Math.round(deg / 45) % 8];
+}
+
+function initialData(): UserData {
+  const res = Intl.DateTimeFormat().resolvedOptions();
+  const offMin = -new Date().getTimezoneOffset();
+  const sign = offMin >= 0 ? "+" : "-";
+  const abs = Math.abs(offMin);
+  const utcOffset = `UTC${sign}${String(Math.floor(abs / 60)).padStart(2, "0")}:${String(abs % 60).padStart(2, "0")}`;
+  const nav = navigator as any;
+
+  const mq = (q: string) => {
+    try { return window.matchMedia(q).matches; } catch { return false; }
+  };
+
+  let colorGamut: string | null = "sRGB";
+  if (mq("(color-gamut: rec2020)")) colorGamut = "Rec. 2020";
+  else if (mq("(color-gamut: p3)")) colorGamut = "Display P3";
+
+  const conn = nav.connection || nav.mozConnection || nav.webkitConnection;
+
+  return {
+    loading: true,
+    error: false,
+    permissionState: "prompt",
+
+    coordinates: null,
+    precise: false,
+    accuracy: null,
+    locationLabel: null,
+    locationText: null,
+    altitude: null,
+
+    ip: null, isp: null, org: null, asn: null, postal: null,
+    countryFlag: null, currency: null, vpnProxy: null, ipSource: null,
+
+    elevation: null, weather: null, feelsLike: null, humidity: null, wind: null,
+    pressure: null, cloudCover: null, uvIndex: null, sunrise: null, sunset: null, airQuality: null,
+
+    timezone: res.timeZone || "Unknown",
+    utcOffset,
+    localTime: new Date().toLocaleTimeString(),
+    locale: res.locale || navigator.language || "Unknown",
+
+    browser: "Detecting…",
+    os: "Detecting…",
+    deviceModel: null,
+    cpuArch: null,
+    cpuCores: navigator.hardwareConcurrency ? `${navigator.hardwareConcurrency} cores` : "Unknown",
+    deviceMemory: nav.deviceMemory ? `${nav.deviceMemory} GB` : null,
+    gpu: null,
+    gpuVendor: null,
+    battery: null,
+    storage: null,
+
+    screenResolution: `${window.screen.width} × ${window.screen.height}`,
+    availResolution: `${window.screen.availWidth} × ${window.screen.availHeight}`,
+    windowSize: `${window.innerWidth} × ${window.innerHeight}`,
+    pixelRatio: `${window.devicePixelRatio}×`,
+    colorDepth: `${window.screen.colorDepth}-bit`,
+    colorGamut,
+    orientation: (window.screen.orientation && window.screen.orientation.type) || null,
+    hdr: mq("(dynamic-range: high)") ? "HDR capable" : "Standard (SDR)",
+
+    touchSupport: navigator.maxTouchPoints > 0 ? `Yes · ${navigator.maxTouchPoints} points` : "No",
+    pointerType: mq("(pointer: coarse)") ? "Touch / coarse" : mq("(pointer: fine)") ? "Mouse / fine" : null,
+    cameras: null, microphones: null, speakers: null,
+
+    language: navigator.language || "Unknown",
+    languages: navigator.languages ? navigator.languages.join(", ") : null,
+    cookiesEnabled: navigator.cookieEnabled ? "Enabled" : "Disabled",
+    doNotTrack: navigator.doNotTrack === "1" ? "Enabled" : "Not set",
+    gpc: typeof nav.globalPrivacyControl === "boolean" ? (nav.globalPrivacyControl ? "Enabled" : "Off") : null,
+    reducedMotion: mq("(prefers-reduced-motion: reduce)") ? "Reduced" : "No preference",
+    colorScheme: mq("(prefers-color-scheme: dark)") ? "Dark" : "Light",
+    connectionType: conn?.effectiveType ? conn.effectiveType.toUpperCase() : null,
+    connectionDetail: conn?.downlink != null ? `${conn.downlink} Mbps · ${conn.rtt ?? "?"} ms RTT${conn.saveData ? " · Data Saver" : ""}` : null,
+    onlineStatus: navigator.onLine ? "Online" : "Offline",
+    referrer: document.referrer || "Direct / none",
+    webdriver: navigator.webdriver ? "Automated (webdriver)" : "Human (no webdriver)",
+
+    canvasHash: null,
+    fonts: null,
+    permissions: null,
+  };
+}
+
+function detectBrowserOS(): { browser: string; os: string } {
+  const ua = navigator.userAgent;
+  let browser = "Unknown";
+  if (ua.includes("Edg/")) browser = "Edge";
+  else if (ua.includes("OPR/") || ua.includes("Opera")) browser = "Opera";
+  else if (ua.includes("Firefox/")) browser = "Firefox";
+  else if (ua.includes("Chrome/")) browser = "Chrome";
+  else if (ua.includes("Safari/")) browser = "Safari";
+
+  let os = "Unknown OS";
+  if (/Windows NT 10/.test(ua)) os = "Windows 10/11";
+  else if (ua.includes("Windows")) os = "Windows";
+  else if (/iPhone|iPad|iPod/.test(ua)) os = "iOS";
+  else if (ua.includes("Mac OS X")) os = "macOS";
+  else if (ua.includes("Android")) os = "Android";
+  else if (ua.includes("Linux")) os = "Linux";
+  return { browser, os };
+}
+
+function canvasFingerprint(): string | null {
+  try {
+    const c = document.createElement("canvas");
+    c.width = 240; c.height = 60;
+    const x = c.getContext("2d");
+    if (!x) return null;
+    x.textBaseline = "top";
+    x.font = "16px 'Arial'";
+    x.fillStyle = "#f60";
+    x.fillRect(0, 0, 120, 30);
+    x.fillStyle = "#069";
+    x.fillText("Globe fingerprint 🌐", 2, 4);
+    x.strokeStyle = "rgba(120,0,200,0.6)";
+    x.arc(60, 30, 20, 0, Math.PI * 2);
+    x.stroke();
+    const data = c.toDataURL();
+    let h = 0x811c9dc5;
+    for (let i = 0; i < data.length; i++) {
+      h ^= data.charCodeAt(i);
+      h = Math.imul(h, 0x01000193);
+    }
+    return (h >>> 0).toString(16).padStart(8, "0");
+  } catch {
+    return null;
+  }
+}
+
+function detectFonts(): string | null {
+  try {
+    const base = ["monospace", "sans-serif", "serif"];
+    const test = ["Arial", "Helvetica", "Times New Roman", "Courier New", "Georgia",
+      "Verdana", "Segoe UI", "Roboto", "Ubuntu", "Menlo", "Consolas", "Cantarell",
+      "Comic Sans MS", "Impact", "Tahoma", "Trebuchet MS", "Palatino"];
+    const span = document.createElement("span");
+    span.style.cssText = "position:absolute;left:-9999px;font-size:72px";
+    span.textContent = "mmmmmmmmmmlli";
+    document.body.appendChild(span);
+    const baseline: Record<string, number> = {};
+    for (const b of base) {
+      span.style.fontFamily = b;
+      baseline[b] = span.offsetWidth;
+    }
+    let count = 0;
+    for (const f of test) {
+      let detected = false;
+      for (const b of base) {
+        span.style.fontFamily = `'${f}',${b}`;
+        if (span.offsetWidth !== baseline[b]) { detected = true; break; }
+      }
+      if (detected) count++;
+    }
+    document.body.removeChild(span);
+    return `${count} of ${test.length} probed`;
+  } catch {
+    return null;
+  }
+}
+
+function readGPU(): { gpu: string | null; vendor: string | null } {
+  try {
+    const c = document.createElement("canvas");
+    const gl = (c.getContext("webgl") || c.getContext("experimental-webgl")) as WebGLRenderingContext | null;
+    if (!gl) return { gpu: null, vendor: null };
+    const dbg = gl.getExtension("WEBGL_debug_renderer_info");
+    if (!dbg) return { gpu: null, vendor: null };
+    const renderer = gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) as string;
+    const vendor = gl.getParameter(dbg.UNMASKED_VENDOR_WEBGL) as string;
+    return { gpu: renderer || null, vendor: vendor || null };
+  } catch {
+    return { gpu: null, vendor: null };
+  }
+}
+
+// timeout-guarded fetch → JSON
+async function getJSON(url: string, ms = 5000): Promise<any> {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), ms);
+  try {
+    const r = await fetch(url, { signal: ctrl.signal });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    return await r.json();
+  } finally {
+    clearTimeout(t);
+  }
 }
 
 export function useUserData() {
-  const [data, setData] = useState<UserData>({
-    locationText: null,
-    coordinates: null,
-    loading: true,
-    error: false,
-    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-    localTime: new Date().toLocaleTimeString(),
-    browserOS: "",
-    screenResolution: `${window.screen.width} x ${window.screen.height}`,
-    colorDepth: `${window.screen.colorDepth}-bit`,
-    deviceMemory: (navigator as any).deviceMemory ? `${(navigator as any).deviceMemory} GB` : null,
-    language: navigator.language || "Unknown",
-    onlineStatus: navigator.onLine ? "Online" : "Offline",
-    battery: null,
-    connectionType: (navigator as any).connection?.effectiveType || null,
-    cookiesEnabled: navigator.cookieEnabled ? "Enabled" : "Disabled",
-    doNotTrack: navigator.doNotTrack === "1" ? "Enabled" : "Disabled",
-    cpuCores: navigator.hardwareConcurrency ? `${navigator.hardwareConcurrency} cores` : "Unknown",
-    touchSupport: navigator.maxTouchPoints > 0 ? `Yes (${navigator.maxTouchPoints} points)` : "No",
-  });
+  const [data, setData] = useState<UserData>(initialData);
+  const patch = useCallback((p: Partial<UserData>) => setData((prev) => ({ ...prev, ...p })), []);
+  const lastGeoKey = useRef<string>("");
+
+  // Fetch weather / elevation / air-quality / sun times for a coordinate.
+  const loadGeoDerived = useCallback(async (lat: number, lon: number) => {
+    const key = `${lat.toFixed(2)},${lon.toFixed(2)}`;
+    if (lastGeoKey.current === key) return;
+    lastGeoKey.current = key;
+
+    const imperial = (navigator.language || "").toLowerCase().includes("us");
+    const tUnit = imperial ? "fahrenheit" : "celsius";
+    const wUnit = imperial ? "mph" : "kmh";
+    const tSym = imperial ? "°F" : "°C";
+    const wSym = imperial ? "mph" : "km/h";
+
+    getJSON(
+      `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}` +
+      `&current=temperature_2m,relative_humidity_2m,apparent_temperature,is_day,weather_code,cloud_cover,surface_pressure,wind_speed_10m,wind_direction_10m` +
+      `&daily=sunrise,sunset,uv_index_max&timezone=auto&temperature_unit=${tUnit}&wind_speed_unit=${wUnit}`
+    ).then((w) => {
+      const c = w.current || {};
+      const d = w.daily || {};
+      const code = c.weather_code;
+      const icon = WMO_ICON[code] || "";
+      const desc = WMO[code] || "Unknown";
+      const fmtTime = (iso?: string) => {
+        if (!iso) return null;
+        try { return new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }); }
+        catch { return iso; }
+      };
+      patch({
+        weather: c.temperature_2m != null ? `${icon} ${Math.round(c.temperature_2m)}${tSym} · ${desc}` : null,
+        feelsLike: c.apparent_temperature != null ? `${Math.round(c.apparent_temperature)}${tSym}` : null,
+        humidity: c.relative_humidity_2m != null ? `${c.relative_humidity_2m}%` : null,
+        wind: c.wind_speed_10m != null ? `${Math.round(c.wind_speed_10m)} ${wSym} ${compass(c.wind_direction_10m || 0)}` : null,
+        pressure: c.surface_pressure != null ? `${Math.round(c.surface_pressure)} hPa` : null,
+        cloudCover: c.cloud_cover != null ? `${c.cloud_cover}%` : null,
+        uvIndex: d.uv_index_max?.[0] != null ? `${d.uv_index_max[0]}` : null,
+        sunrise: fmtTime(d.sunrise?.[0]),
+        sunset: fmtTime(d.sunset?.[0]),
+      });
+    }).catch(() => {});
+
+    getJSON(`https://api.open-meteo.com/v1/elevation?latitude=${lat}&longitude=${lon}`)
+      .then((e) => {
+        const m = e.elevation?.[0];
+        if (m != null) {
+          patch({ elevation: imperial ? `${Math.round(m * 3.281)} ft` : `${Math.round(m)} m` });
+        }
+      }).catch(() => {});
+
+    getJSON(`https://air-quality-api.open-meteo.com/v1/air-quality?latitude=${lat}&longitude=${lon}&current=us_aqi,pm2_5`)
+      .then((a) => {
+        const aqi = a.current?.us_aqi;
+        const pm = a.current?.pm2_5;
+        if (aqi != null) {
+          const band = aqi <= 50 ? "Good" : aqi <= 100 ? "Moderate" : aqi <= 150 ? "Unhealthy (sensitive)" : aqi <= 200 ? "Unhealthy" : "Very unhealthy";
+          patch({ airQuality: `AQI ${aqi} · ${band}${pm != null ? ` · PM2.5 ${pm}` : ""}` });
+        }
+      }).catch(() => {});
+  }, [patch]);
+
+  // Reverse-geocode precise coordinates → place name.
+  const reverseGeocode = useCallback(async (lat: number, lon: number) => {
+    try {
+      const b = await getJSON(
+        `https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lon}&localityLanguage=en`
+      );
+      const city = b.city || b.locality || b.principalSubdivision || "";
+      const parts = [b.city || b.locality, b.principalSubdivision, b.countryName].filter(Boolean);
+      patch({
+        locationLabel: city || b.countryName || "Your location",
+        locationText: parts.join(", ") || null,
+        postal: b.postcode || undefined,
+      });
+    } catch { /* keep IP-derived label */ }
+  }, [patch]);
+
+  // Attempt a precise GPS fix (used on mount and via the button).
+  const requestPrecise = useCallback(() => {
+    if (!("geolocation" in navigator)) return;
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const lat = pos.coords.latitude;
+        const lon = pos.coords.longitude;
+        patch({
+          coordinates: [lat, lon],
+          precise: true,
+          permissionState: "granted",
+          accuracy: pos.coords.accuracy != null ? `±${Math.round(pos.coords.accuracy)} m` : null,
+          altitude: pos.coords.altitude != null ? `${Math.round(pos.coords.altitude)} m` : null,
+          loading: false,
+          error: false,
+        });
+        reverseGeocode(lat, lon);
+        loadGeoDerived(lat, lon);
+      },
+      (err) => {
+        patch({ permissionState: err.code === 1 ? "denied" : "prompt" });
+      },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+    );
+  }, [patch, reverseGeocode, loadGeoDerived]);
 
   useEffect(() => {
-    // Update local time every second
+    // live clock
     const timer = setInterval(() => {
-      setData(prev => ({ ...prev, localTime: new Date().toLocaleTimeString() }));
+      patch({ localTime: new Date().toLocaleTimeString() });
     }, 1000);
 
-    // Browser & OS simplified parsing
-    const ua = navigator.userAgent;
-    let browserOS = "Unknown";
-    
-    if ((navigator as any).userAgentData) {
-      const platform = (navigator as any).userAgentData.platform;
-      const browser = (navigator as any).userAgentData.brands[0]?.brand || "Unknown";
-      browserOS = `${browser} on ${platform}`;
-    } else {
-      let browser = "Unknown";
-      if (ua.includes("Firefox")) browser = "Firefox";
-      else if (ua.includes("Chrome")) browser = "Chrome";
-      else if (ua.includes("Safari")) browser = "Safari";
-      else if (ua.includes("Edge")) browser = "Edge";
-      else if (ua.includes("MSIE") || ua.includes("Trident/")) browser = "Internet Explorer";
-      
-      let os = "Unknown OS";
-      if (ua.includes("Win")) os = "Windows";
-      else if (ua.includes("Mac")) os = "MacOS";
-      else if (ua.includes("X11")) os = "UNIX";
-      else if (ua.includes("Linux")) os = "Linux";
-      
-      browserOS = `${browser} on ${os}`;
+    // browser / OS
+    patch(detectBrowserOS());
+
+    // high-entropy UA (Chromium)
+    const uaData = (navigator as any).userAgentData;
+    if (uaData?.getHighEntropyValues) {
+      uaData.getHighEntropyValues(["architecture", "bitness", "model", "platformVersion", "uaFullVersion", "fullVersionList"])
+        .then((he: any) => {
+          const brand = he.fullVersionList?.find((b: any) => !/Not.?A.?Brand/i.test(b.brand));
+          patch({
+            cpuArch: he.architecture ? `${he.architecture}${he.bitness ? ` · ${he.bitness}-bit` : ""}` : null,
+            deviceModel: he.model || null,
+            browser: brand ? `${brand.brand} ${brand.version.split(".")[0]}` : undefined,
+          });
+        }).catch(() => {});
     }
 
-    setData(prev => ({ ...prev, browserOS }));
+    // GPU
+    const { gpu, vendor } = readGPU();
+    patch({ gpu, gpuVendor: vendor });
 
-    // Battery
-    if ('getBattery' in navigator) {
-      (navigator as any).getBattery().then((battery: any) => {
-        const updateBattery = () => {
-          setData(prev => ({
-            ...prev,
-            battery: `${Math.round(battery.level * 100)}% (${battery.charging ? 'Charging' : 'Discharging'})`
-          }));
-        };
-        updateBattery();
-        battery.addEventListener('levelchange', updateBattery);
-        battery.addEventListener('chargingchange', updateBattery);
-      });
+    // canvas + fonts fingerprint
+    patch({ canvasHash: canvasFingerprint(), fonts: detectFonts() });
+
+    // battery
+    if ("getBattery" in navigator) {
+      (navigator as any).getBattery().then((bat: any) => {
+        const upd = () => patch({
+          battery: `${Math.round(bat.level * 100)}% · ${bat.charging ? "Charging" : "On battery"}`,
+        });
+        upd();
+        bat.addEventListener("levelchange", upd);
+        bat.addEventListener("chargingchange", upd);
+      }).catch(() => {});
     }
 
-    // IP Location
-    const fetchLocation = async () => {
-      try {
-        const response = await fetch("https://ipapi.co/json/");
-        if (!response.ok) throw new Error("Network response was not ok");
-        const json = await response.json();
-        
-        if (json.error) {
-          throw new Error(json.reason || "API Error");
+    // storage estimate
+    if (navigator.storage?.estimate) {
+      navigator.storage.estimate().then((est) => {
+        const gb = (n?: number) => (n ? (n / 1073741824).toFixed(1) : "0");
+        if (est.quota) {
+          patch({ storage: `${gb(est.usage)} GB used of ~${gb(est.quota)} GB quota` });
         }
+      }).catch(() => {});
+    }
 
-        setData(prev => ({
-          ...prev,
-          loading: false,
-          locationText: `${json.city || "Unknown"}, ${json.country_name || "Unknown"}`,
-          coordinates: json.latitude && json.longitude ? [json.latitude, json.longitude] : null,
-        }));
-      } catch (error) {
-        console.error("Failed to fetch location:", error);
-        setData(prev => ({
-          ...prev,
-          loading: false,
-          error: true,
-          locationText: "Location unavailable",
-        }));
-      }
+    // media device counts
+    if (navigator.mediaDevices?.enumerateDevices) {
+      navigator.mediaDevices.enumerateDevices().then((list) => {
+        const n = (k: string) => list.filter((d) => d.kind === k).length;
+        patch({
+          cameras: `${n("videoinput")}`,
+          microphones: `${n("audioinput")}`,
+          speakers: `${n("audiooutput")}`,
+        });
+      }).catch(() => {});
+    }
+
+    // permission states (no prompt)
+    if (navigator.permissions?.query) {
+      const names = ["geolocation", "camera", "microphone", "notifications"];
+      Promise.all(names.map(async (name) => {
+        try { return `${name}: ${(await navigator.permissions.query({ name: name as PermissionName })).state}`; }
+        catch { return null; }
+      })).then((rows) => {
+        const clean = rows.filter(Boolean) as string[];
+        if (clean.length) patch({ permissions: clean.join(" · ") });
+      });
+      navigator.permissions.query({ name: "geolocation" as PermissionName })
+        .then((s) => patch({ permissionState: s.state }))
+        .catch(() => {});
+    }
+
+    // --- location: IP fallback first, then attempt precise upgrade ---
+    const ipChain = async () => {
+      // 1) ipwho.is (richest)
+      try {
+        const j = await getJSON("https://ipwho.is/");
+        if (j && j.success !== false && j.latitude != null) {
+          patch({
+            loading: false,
+            ipSource: "ipwho.is",
+            ip: j.ip || null,
+            coordinates: [j.latitude, j.longitude],
+            locationLabel: j.city || j.country || null,
+            locationText: [j.city, j.region, j.country].filter(Boolean).join(", ") || null,
+            isp: j.connection?.isp || j.connection?.org || null,
+            org: j.connection?.org || null,
+            asn: j.connection?.asn ? `AS${String(j.connection.asn).replace(/^AS/i, "")}` : null,
+            postal: j.postal || null,
+            countryFlag: j.flag?.emoji || null,
+            currency: j.currency?.code ? `${j.currency.code}${j.currency.symbol ? ` (${j.currency.symbol})` : ""}` : null,
+            vpnProxy: j.security ? (j.security.vpn || j.security.proxy || j.security.tor ? "VPN / proxy detected" : "None detected") : null,
+          });
+          loadGeoDerived(j.latitude, j.longitude);
+          return true;
+        }
+      } catch { /* fall through */ }
+      // 2) geojs.io (no rate limit)
+      try {
+        const g = await getJSON("https://get.geojs.io/v1/ip/geo.json");
+        if (g && g.latitude != null) {
+          patch({
+            loading: false,
+            ipSource: "geojs.io",
+            ip: g.ip || null,
+            coordinates: [parseFloat(g.latitude), parseFloat(g.longitude)],
+            locationLabel: g.city || g.country || null,
+            locationText: [g.city, g.region, g.country].filter(Boolean).join(", ") || null,
+            org: g.organization_name || null,
+            isp: g.organization_name || null,
+            asn: g.asn ? `AS${g.asn}` : null,
+          });
+          loadGeoDerived(parseFloat(g.latitude), parseFloat(g.longitude));
+          return true;
+        }
+      } catch { /* fall through */ }
+      // 3) ipapi.co
+      try {
+        const p = await getJSON("https://ipapi.co/json/");
+        if (p && !p.error && p.latitude != null) {
+          patch({
+            loading: false,
+            ipSource: "ipapi.co",
+            ip: p.ip || null,
+            coordinates: [p.latitude, p.longitude],
+            locationLabel: p.city || p.country_name || null,
+            locationText: [p.city, p.region, p.country_name].filter(Boolean).join(", ") || null,
+            org: p.org || null,
+            isp: p.org || null,
+            asn: p.asn || null,
+            postal: p.postal || null,
+            currency: p.currency || null,
+          });
+          loadGeoDerived(p.latitude, p.longitude);
+          return true;
+        }
+      } catch { /* fall through */ }
+      return false;
     };
 
-    fetchLocation();
+    ipChain().then((ok) => {
+      if (!ok) patch({ loading: false, error: true, locationText: "Location unavailable" });
+      // Upgrade to precise unless the user already denied it.
+      let state = "prompt";
+      const done = () => { if (state !== "denied") requestPrecise(); };
+      if (navigator.permissions?.query) {
+        navigator.permissions.query({ name: "geolocation" as PermissionName })
+          .then((s) => { state = s.state; done(); })
+          .catch(done);
+      } else {
+        done();
+      }
+    });
 
     return () => clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  return data;
+  return { ...data, requestPrecise };
 }
