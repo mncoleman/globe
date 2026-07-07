@@ -45,3 +45,4 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: artifacts/landing/dist/gh-pages
           publish_branch: gh-pages
+          cname: globe.mncoleman.com
