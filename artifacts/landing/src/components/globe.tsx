@@ -163,8 +163,9 @@ export function InteractiveGlobe({ location, label, precise }: GlobeProps) {
           className="pointer-events-none absolute left-0 top-0 z-20 will-change-transform"
           style={{ transition: "opacity 200ms ease" }}
         >
-          <div className="flex flex-col items-center">
-            <div className="flex items-center gap-1.5 whitespace-nowrap rounded-full border border-white/15 bg-black/75 px-3 py-1 text-xs font-medium text-white shadow-lg backdrop-blur-md">
+          <div className="relative flex flex-col items-center">
+            {/* label pill */}
+            <div className="mb-1 flex items-center gap-1.5 whitespace-nowrap rounded-full border border-white/15 bg-black/75 px-3 py-1 text-xs font-medium text-white shadow-lg backdrop-blur-md">
               <span className="relative flex h-1.5 w-1.5">
                 <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-cyan-400 opacity-75" />
                 <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-cyan-400" />
@@ -176,11 +177,75 @@ export function InteractiveGlobe({ location, label, precise }: GlobeProps) {
                 </span>
               )}
             </div>
-            {/* connector stem down to the anchor point on the globe */}
-            <span className="h-2 w-px bg-white/40" />
+
+            {/* 3D map pin — tip sits at the anchor point on the globe */}
+            <div className="pin-bob">
+              <Pin3D />
+            </div>
+
+            {/* ground shadow anchored at the tip, breathing with the float */}
+            <span className="pin-shadow absolute -bottom-[3px] left-1/2 -z-10 h-[5px] w-5 -translate-x-1/2 rounded-[50%] bg-black/70 blur-[2px]" />
           </div>
         </div>
       )}
     </div>
+  );
+}
+
+// Glossy 3D teardrop map-pin. Vertical gradient + top-left gloss highlight +
+// recessed dark hole + drop shadow give it depth; the tip is at the bottom.
+function Pin3D() {
+  return (
+    <svg
+      width="34"
+      height="46"
+      viewBox="0 0 34 46"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      style={{ filter: "drop-shadow(0 3px 3px rgba(0,0,0,0.35))" }}
+    >
+      <defs>
+        <linearGradient id="pinBody" x1="8" y1="2" x2="26" y2="44" gradientUnits="userSpaceOnUse">
+          <stop stopColor="#a5f3fc" />
+          <stop offset="0.45" stopColor="#22d3ee" />
+          <stop offset="1" stopColor="#0e7490" />
+        </linearGradient>
+        <radialGradient
+          id="pinGloss"
+          cx="0" cy="0" r="1"
+          gradientUnits="userSpaceOnUse"
+          gradientTransform="translate(12 11) rotate(58) scale(13)"
+        >
+          <stop stopColor="#ffffff" stopOpacity="0.95" />
+          <stop offset="0.5" stopColor="#ffffff" stopOpacity="0" />
+        </radialGradient>
+        <radialGradient
+          id="pinHole"
+          cx="0" cy="0" r="1"
+          gradientUnits="userSpaceOnUse"
+          gradientTransform="translate(17 16.5) scale(7)"
+        >
+          <stop stopColor="#0b3a44" />
+          <stop offset="1" stopColor="#062730" />
+        </radialGradient>
+      </defs>
+      {/* body */}
+      <path
+        d="M17 44.5C10 32 3.5 25.5 3.5 15.5A13.5 13.5 0 1 1 30.5 15.5C30.5 25.5 24 32 17 44.5Z"
+        fill="url(#pinBody)"
+        stroke="#0891b2"
+        strokeWidth="0.75"
+      />
+      {/* gloss highlight */}
+      <path
+        d="M17 44.5C10 32 3.5 25.5 3.5 15.5A13.5 13.5 0 1 1 30.5 15.5C30.5 25.5 24 32 17 44.5Z"
+        fill="url(#pinGloss)"
+      />
+      {/* recessed hole */}
+      <circle cx="17" cy="16.5" r="6.2" fill="url(#pinHole)" />
+      <circle cx="17" cy="16.5" r="6.2" fill="none" stroke="#083b46" strokeWidth="0.6" />
+      {/* specular dot */}
+      <circle cx="14.6" cy="14" r="1.5" fill="#67e8f9" opacity="0.85" />
+    </svg>
   );
 }
