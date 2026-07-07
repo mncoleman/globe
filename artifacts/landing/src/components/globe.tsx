@@ -8,6 +8,10 @@ interface GlobeProps {
   precise?: boolean;
 }
 
+// cobe renders the sphere smaller than the canvas (margin for the glow), so
+// scale the projected offset from centre onto the actual rendered radius.
+const GLOBE_SCALE = 0.8;
+
 export function InteractiveGlobe({ location, label, precise }: GlobeProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -76,8 +80,8 @@ export function InteractiveGlobe({ location, label, precise }: GlobeProps) {
       const dz = -sp * ct * x + st * y + cp * ct * z; // depth: ≥0 = front hemisphere
 
       const size = container.clientWidth;
-      const sx = ((c + 1) / 2) * size;
-      const sy = ((1 - s) / 2) * size;
+      const sx = (size / 2) * (1 + c * GLOBE_SCALE);
+      const sy = (size / 2) * (1 - s * GLOBE_SCALE);
 
       el.style.transform = `translate(-50%, -100%) translate(${sx}px, ${sy}px)`;
       // Fade out as the point rotates toward / past the horizon.
