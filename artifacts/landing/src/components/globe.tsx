@@ -44,8 +44,10 @@ export function InteractiveGlobe({ location, label, precise }: GlobeProps) {
       baseColor:   isDark ? [0.3, 0.3, 0.3] : [0.6, 0.65, 0.8],
       markerColor: [0.1, 0.8, 1],
       glowColor:   isDark ? [1, 1, 1] : [0.3, 0.5, 0.9],
+      // keep the surface glow at the exact anchor so the 3D pin tip lands on it
+      markerElevation: 0,
       markers: [],
-    });
+    } as Parameters<typeof createGlobe>[1]);
 
     // Mirrors cobe's own marker projection (its internal U() location→xyz and
     // O() point→screen) so the overlay lands exactly on the rendered marker.
