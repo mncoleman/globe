@@ -1,0 +1,47 @@
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm --filter @workspace/landing exec vite build --config vite.gh-pages.config.ts
+        env:
+          # Set to /your-repo-name/ if not using a custom domain.
+          # Leave as / if using a custom domain at the root.
+          VITE_BASE_PATH: /
+
+      - name: Copy 404.html for SPA routing
+        run: cp artifacts/landing/dist/gh-pages/index.html artifacts/landing/dist/gh-pages/404.html
+
+      - name: Deploy
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: artifacts/landing/dist/gh-pages
+          publish_branch: gh-pages
