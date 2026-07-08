@@ -1,31 +1,37 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 
 // ─────────────────────────────────────────────────────────────────────────────
-//  ⚙️  CONFIG — tweak these to change how measurements are displayed.
+//  ⚙️  UNIT SETTINGS — how measurements are displayed.
 //
-//  Every field accepts "auto", which infers the unit from the visitor's browser
-//  locale (US → imperial, everywhere else → metric). Override any field with an
-//  explicit unit to force it regardless of locale.
+//  These are the defaults the page boots with; visitors can change any of them
+//  live via the in-page Units panel (the gear button in the top bar). Every
+//  field accepts "auto", which infers the unit from the visitor's browser locale
+//  (US → imperial, everywhere else → metric). Set an explicit unit to force it
+//  regardless of locale.
 // ─────────────────────────────────────────────────────────────────────────────
-const CONFIG = {
+export type UnitSettings = {
   /** Master preference used to resolve any field left on "auto". */
-  units: "auto" as "auto" | "imperial" | "metric",
-
+  units: "auto" | "imperial" | "metric";
   /** Temperature scale. "auto" → °F in the US, °C elsewhere. */
-  temperature: "auto" as "auto" | "F" | "C",
-
+  temperature: "auto" | "F" | "C";
   /** Wind speed. "auto" → mph (imperial) / km/h (metric). */
-  windSpeed: "auto" as "auto" | "mph" | "kmh" | "ms" | "kn",
-
-  /** Barometric pressure. Defaults to inches of mercury. */
-  pressure: "inHg" as "auto" | "inHg" | "hPa" | "mmHg",
-
+  windSpeed: "auto" | "mph" | "kmh" | "ms" | "kn";
+  /** Barometric pressure. */
+  pressure: "auto" | "inHg" | "hPa" | "mmHg";
   /** Elevation / altitude. "auto" → feet (imperial) / metres (metric). */
-  distance: "auto" as "auto" | "ft" | "m",
-} as const;
+  distance: "auto" | "ft" | "m";
+};
 
-// ── Resolve CONFIG into concrete units, honouring "auto" + browser locale ──
-type ResolvedUnits = {
+export const DEFAULT_UNITS: UnitSettings = {
+  units: "auto",
+  temperature: "auto",
+  windSpeed: "auto",
+  pressure: "inHg", // pressure defaults to inches of mercury
+  distance: "auto",
+};
+
+// ── Resolve settings into concrete units, honouring "auto" + browser locale ──
+export type ResolvedUnits = {
   imperial: boolean;
   temp: "F" | "C";
   wind: "mph" | "kmh" | "ms" | "kn";
@@ -33,21 +39,21 @@ type ResolvedUnits = {
   distance: "ft" | "m";
 };
 
-function resolveUnits(): ResolvedUnits {
-  // Master preference: explicit config wins, otherwise sniff the locale.
+export function resolveUnits(s: UnitSettings): ResolvedUnits {
+  // Master preference: explicit choice wins, otherwise sniff the locale.
   const imperial =
-    CONFIG.units === "imperial"
+    s.units === "imperial"
       ? true
-      : CONFIG.units === "metric"
+      : s.units === "metric"
         ? false
         : (navigator.language || "").toLowerCase().includes("us");
 
   return {
     imperial,
-    temp: CONFIG.temperature === "auto" ? (imperial ? "F" : "C") : CONFIG.temperature,
-    wind: CONFIG.windSpeed === "auto" ? (imperial ? "mph" : "kmh") : CONFIG.windSpeed,
-    pressure: CONFIG.pressure === "auto" ? (imperial ? "inHg" : "hPa") : CONFIG.pressure,
-    distance: CONFIG.distance === "auto" ? (imperial ? "ft" : "m") : CONFIG.distance,
+    temp: s.temperature === "auto" ? (imperial ? "F" : "C") : s.temperature,
+    wind: s.windSpeed === "auto" ? (imperial ? "mph" : "kmh") : s.windSpeed,
+    pressure: s.pressure === "auto" ? (imperial ? "inHg" : "hPa") : s.pressure,
+    distance: s.distance === "auto" ? (imperial ? "ft" : "m") : s.distance,
   };
 }
 
@@ -376,13 +382,21 @@ export function useUserData() {
   const patch = useCallback((p: Partial<UserData>) => setData((prev) => ({ ...prev, ...p })), []);
   const lastGeoKey = useRef<string>("");
 
+  // Live unit preferences. `settingsRef` mirrors state so the async fetchers
+  // always read the latest units without being re-created on every change.
+  const [unitSettings, setUnitSettings] = useState<UnitSettings>(DEFAULT_UNITS);
+  const settingsRef = useRef<UnitSettings>(unitSettings);
+  const coordsRef = useRef<[number, number] | null>(null);
+
   // Fetch weather / elevation / air-quality / sun times for a coordinate.
   const loadGeoDerived = useCallback(async (lat: number, lon: number) => {
-    const key = `${lat.toFixed(2)},${lon.toFixed(2)}`;
+    coordsRef.current = [lat, lon];
+    // Key by coordinate AND unit settings so changing units triggers a refetch.
+    const key = `${lat.toFixed(2)},${lon.toFixed(2)}|${JSON.stringify(settingsRef.current)}`;
     if (lastGeoKey.current === key) return;
     lastGeoKey.current = key;
 
-    const units = resolveUnits();
+    const units = resolveUnits(settingsRef.current);
     const tUnit = units.temp === "F" ? "fahrenheit" : "celsius";
     const wUnit = WIND_API_UNIT[units.wind];
     const tSym = units.temp === "F" ? "°F" : "°C";
@@ -464,7 +478,7 @@ export function useUserData() {
           permissionState: "granted",
           accuracy: pos.coords.accuracy != null ? `±${Math.round(pos.coords.accuracy)} m` : null,
           altitude: pos.coords.altitude != null
-            ? (resolveUnits().distance === "ft"
+            ? (resolveUnits(settingsRef.current).distance === "ft"
                 ? `${Math.round(pos.coords.altitude * 3.281)} ft`
                 : `${Math.round(pos.coords.altitude)} m`)
             : null,
@@ -646,5 +660,15 @@ export function useUserData() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  return { ...data, requestPrecise };
+  // Update unit preferences and immediately re-derive weather for the current
+  // coordinate so the change is reflected without a page reload.
+  const setUnit = useCallback((changes: Partial<UnitSettings>) => {
+    const next = { ...settingsRef.current, ...changes };
+    settingsRef.current = next;
+    setUnitSettings(next);
+    const coords = coordsRef.current;
+    if (coords) loadGeoDerived(coords[0], coords[1]);
+  }, [loadGeoDerived]);
+
+  return { ...data, requestPrecise, unitSettings, setUnit };
 }

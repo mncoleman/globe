@@ -153,7 +153,7 @@ export default function Home() {
 
   return (
     <div className="min-h-screen w-full relative overflow-x-hidden selection:bg-primary selection:text-primary-foreground">
-      <Navbar />
+      <Navbar unitSettings={userData.unitSettings} onUnitChange={userData.setUnit} />
 
       {/* Decorative background blurs */}
       <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-blue-500/10 rounded-full blur-[128px] pointer-events-none -z-10" />
