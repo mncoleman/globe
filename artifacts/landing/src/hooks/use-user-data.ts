@@ -1,5 +1,73 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 
+// ─────────────────────────────────────────────────────────────────────────────
+//  ⚙️  CONFIG — tweak these to change how measurements are displayed.
+//
+//  Every field accepts "auto", which infers the unit from the visitor's browser
+//  locale (US → imperial, everywhere else → metric). Override any field with an
+//  explicit unit to force it regardless of locale.
+// ─────────────────────────────────────────────────────────────────────────────
+const CONFIG = {
+  /** Master preference used to resolve any field left on "auto". */
+  units: "auto" as "auto" | "imperial" | "metric",
+
+  /** Temperature scale. "auto" → °F in the US, °C elsewhere. */
+  temperature: "auto" as "auto" | "F" | "C",
+
+  /** Wind speed. "auto" → mph (imperial) / km/h (metric). */
+  windSpeed: "auto" as "auto" | "mph" | "kmh" | "ms" | "kn",
+
+  /** Barometric pressure. Defaults to inches of mercury. */
+  pressure: "inHg" as "auto" | "inHg" | "hPa" | "mmHg",
+
+  /** Elevation / altitude. "auto" → feet (imperial) / metres (metric). */
+  distance: "auto" as "auto" | "ft" | "m",
+} as const;
+
+// ── Resolve CONFIG into concrete units, honouring "auto" + browser locale ──
+type ResolvedUnits = {
+  imperial: boolean;
+  temp: "F" | "C";
+  wind: "mph" | "kmh" | "ms" | "kn";
+  pressure: "inHg" | "hPa" | "mmHg";
+  distance: "ft" | "m";
+};
+
+function resolveUnits(): ResolvedUnits {
+  // Master preference: explicit config wins, otherwise sniff the locale.
+  const imperial =
+    CONFIG.units === "imperial"
+      ? true
+      : CONFIG.units === "metric"
+        ? false
+        : (navigator.language || "").toLowerCase().includes("us");
+
+  return {
+    imperial,
+    temp: CONFIG.temperature === "auto" ? (imperial ? "F" : "C") : CONFIG.temperature,
+    wind: CONFIG.windSpeed === "auto" ? (imperial ? "mph" : "kmh") : CONFIG.windSpeed,
+    pressure: CONFIG.pressure === "auto" ? (imperial ? "inHg" : "hPa") : CONFIG.pressure,
+    distance: CONFIG.distance === "auto" ? (imperial ? "ft" : "m") : CONFIG.distance,
+  };
+}
+
+// Open-Meteo wind_speed_unit values, keyed by our resolved wind unit.
+const WIND_API_UNIT: Record<ResolvedUnits["wind"], string> = {
+  mph: "mph", kmh: "kmh", ms: "ms", kn: "kn",
+};
+const WIND_LABEL: Record<ResolvedUnits["wind"], string> = {
+  mph: "mph", kmh: "km/h", ms: "m/s", kn: "kn",
+};
+
+// Open-Meteo reports surface_pressure in hPa; convert to the chosen unit.
+function formatPressure(hPa: number, unit: ResolvedUnits["pressure"]): string {
+  switch (unit) {
+    case "inHg": return `${(hPa * 0.02953).toFixed(2)} inHg`;
+    case "mmHg": return `${Math.round(hPa * 0.750062)} mmHg`;
+    default:     return `${Math.round(hPa)} hPa`;
+  }
+}
+
 export interface UserData {
   // ---- status ----
   loading: boolean;
@@ -314,11 +382,11 @@ export function useUserData() {
     if (lastGeoKey.current === key) return;
     lastGeoKey.current = key;
 
-    const imperial = (navigator.language || "").toLowerCase().includes("us");
-    const tUnit = imperial ? "fahrenheit" : "celsius";
-    const wUnit = imperial ? "mph" : "kmh";
-    const tSym = imperial ? "°F" : "°C";
-    const wSym = imperial ? "mph" : "km/h";
+    const units = resolveUnits();
+    const tUnit = units.temp === "F" ? "fahrenheit" : "celsius";
+    const wUnit = WIND_API_UNIT[units.wind];
+    const tSym = units.temp === "F" ? "°F" : "°C";
+    const wSym = WIND_LABEL[units.wind];
 
     getJSON(
       `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}` +
@@ -340,7 +408,7 @@ export function useUserData() {
         feelsLike: c.apparent_temperature != null ? `${Math.round(c.apparent_temperature)}${tSym}` : null,
         humidity: c.relative_humidity_2m != null ? `${c.relative_humidity_2m}%` : null,
         wind: c.wind_speed_10m != null ? `${Math.round(c.wind_speed_10m)} ${wSym} ${compass(c.wind_direction_10m || 0)}` : null,
-        pressure: c.surface_pressure != null ? `${Math.round(c.surface_pressure)} hPa` : null,
+        pressure: c.surface_pressure != null ? formatPressure(c.surface_pressure, units.pressure) : null,
         cloudCover: c.cloud_cover != null ? `${c.cloud_cover}%` : null,
         uvIndex: d.uv_index_max?.[0] != null ? `${d.uv_index_max[0]}` : null,
         sunrise: fmtTime(d.sunrise?.[0]),
@@ -352,7 +420,7 @@ export function useUserData() {
       .then((e) => {
         const m = e.elevation?.[0];
         if (m != null) {
-          patch({ elevation: imperial ? `${Math.round(m * 3.281)} ft` : `${Math.round(m)} m` });
+          patch({ elevation: units.distance === "ft" ? `${Math.round(m * 3.281)} ft` : `${Math.round(m)} m` });
         }
       }).catch(() => {});
 
@@ -395,7 +463,11 @@ export function useUserData() {
           precise: true,
           permissionState: "granted",
           accuracy: pos.coords.accuracy != null ? `±${Math.round(pos.coords.accuracy)} m` : null,
-          altitude: pos.coords.altitude != null ? `${Math.round(pos.coords.altitude)} m` : null,
+          altitude: pos.coords.altitude != null
+            ? (resolveUnits().distance === "ft"
+                ? `${Math.round(pos.coords.altitude * 3.281)} ft`
+                : `${Math.round(pos.coords.altitude)} m`)
+            : null,
           loading: false,
           error: false,
         });
