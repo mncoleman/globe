@@ -1,7 +1,14 @@
 import { ThemeToggle } from "@/components/theme-toggle";
+import { UnitSettingsMenu } from "@/components/unit-settings";
+import type { UnitSettings } from "@/hooks/use-user-data";
 import { Github } from "lucide-react";
 
-export function Navbar() {
+interface NavbarProps {
+  unitSettings: UnitSettings;
+  onUnitChange: (changes: Partial<UnitSettings>) => void;
+}
+
+export function Navbar({ unitSettings, onUnitChange }: NavbarProps) {
   return (
     <nav className="fixed top-0 left-0 right-0 z-50 px-6 py-4 flex items-center justify-between pointer-events-none">
       <div className="flex items-center gap-2 pointer-events-auto">
@@ -21,6 +28,7 @@ export function Navbar() {
         >
           <Github className="h-5 w-5" />
         </a>
+        <UnitSettingsMenu settings={unitSettings} onChange={onUnitChange} />
         <ThemeToggle />
       </div>
     </nav>
